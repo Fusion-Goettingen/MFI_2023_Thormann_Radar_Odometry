@@ -1,11 +1,10 @@
-font.size : 32
-font.family : serif
-font.sans-serif : Palatino
-savefig.format: svg
-figure.figsize : 12.8, 9.6
+font.size : 20
+figure.figsize : 16, 9.6
 
-text.color :        000000
-axes.edgecolor :    000000
-xtick.color :       000000
-ytick.color :       000000
-axes.labelcolor :   000000
+text.color :        003C68
+axes.edgecolor :    003C68
+xtick.color :       003C68
+ytick.color :       003C68
+axes.labelcolor :   003C68
+
+savefig.format: png

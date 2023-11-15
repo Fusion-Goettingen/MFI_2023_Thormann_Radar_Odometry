@@ -3,28 +3,11 @@ import numpy as np
 
 # measurements
 A = 0  # azimuth
-E = 1  # elevation
-R = 2  # range
+R = 1  # range
 X = 0
 Y = 1
-Z = 2
-D = 3  # Doppler
-I = 4  # intensity
-
-# tracker output
-M1 = 0
-M2 = 1
-M3 = 2
-V1 = 3
-V2 = 4
-V3 = 5
-Q0 = 6
-Q1 = 7
-Q2 = 8
-Q3 = 9
-W1 = 10
-W2 = 11
-W3 = 12
+D = 2 # Doppler
+I = 3  # intensity
 
 XY_RES = [100, 100]
 
@@ -51,9 +34,6 @@ CFAR_WINDOW = 64
 CFAR_WINDOW_R = 64  # window in range direction
 CFAR_SCALING = 8#15
 MIN_RANGE_M = 0.5  # ignore some points close to sensor due to overlap
-PRIOR = [0.0, 0.0, 0.5, 0.0, 0.0, 0.05]
-PRIOR_REAL = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-PRIOR_COV = [0.001, 0.001, 0.001, 0.001, 0.001, 0.001]
 
 # RANSAC
 R_EPSILON = 0.5

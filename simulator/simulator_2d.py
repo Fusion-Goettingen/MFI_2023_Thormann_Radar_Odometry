@@ -2,130 +2,140 @@ import numpy as np
 
 from simulator.abstract_simulator import AbstractSimulator
 from utils import rot_mat
-import constants
 
-
-# position
 M1 = 0
 M2 = 1
-# velocity
-V1 = 2
-V2 = 3
-# orientation and yaw rate
-AL = 4
-OM = 5
+V = 2
+AL = 3
+OM = 4
 
 
 class Simulator2D(AbstractSimulator):
-    def __init__(self, rng: np.random.Generator, polar=False, lam_meas=5, lam_clutter=0, area=[-3.0, 3.0, -3.0, 3.0], use_ct=False):
+    def __init__(self, rng: np.random.Generator, scenario_parameters):
         self._rng = rng
 
-        self._state = self._rng.multivariate_normal(constants.PRIOR, np.diag(constants.PRIOR_COV)**2)
+        self._prior = scenario_parameters.get('prior')
+        self._prior_covariance = scenario_parameters.get('prior_covariance')
+        self._state = self._rng.multivariate_normal(self._prior, self._prior_covariance)
 
         self._trajectory = []
         self._trajectory.append(self._state[[M1, M2, AL]])
 
-        self._center_of_rotation_shift = np.array(constants.CENTER_OF_ROTATION_SHIFT[:2])
-        self._sigma_a = constants.SIGMA_A[:2]  # acceleration noise on velocity
-        self._sigma_w = constants.SIGMA_W[0]  # noise on yaw rate
-        self._use_coordinated_turn = use_ct
+        self._center_of_rotation_shift = scenario_parameters.get('center_of_rotation_shift_local')
+        self._velocity_standard_deviation = scenario_parameters.get('velocity_standard_deviation')
+        self._yaw_rate_standard_deviation = scenario_parameters.get('yaw_rate_standard_deviation')
 
-        self._lam_clutter = lam_clutter
-        self._area = area
+        self._expected_number_of_clutter = scenario_parameters.get('expected_number_of_clutter')
+        self._clutter_doppler_noise = scenario_parameters.get('clutter_doppler_standard_deviation')
 
-        self._obstacles = np.array([
-            [2.2, 0.0],
-            [1.5, 1.2],
-            [1.5, -1.2]
-        ])  # azimuth, range
-        self._obstacles = np.array([self._rng.uniform(self._area[0], self._area[1], 4),
-                                    self._rng.uniform(self._area[2], self._area[3], 4)]).T
-        self._lam_n_points = lam_meas
-        self._detection_noise = np.array([constants.SIGMA_THETA, 0.05, constants.SIGMA_DOPPLER])
-        self._clutter_noise = constants.SIGMA_CLUTTER_DOPPLER
+        self._area = scenario_parameters.get('area')
+        self._obstacles = self.__create_obstacles()
 
-        self._polar = polar  # ignore v2 and move in heading direction
+        self._expected_number_of_measurements = scenario_parameters.get('expected_number_of_measurements')
+        self._standard_deviation_theta_r_doppler = np.array([
+            scenario_parameters.get('theta_standard_deviation'),
+            scenario_parameters.get('range_standard_deviation'),
+            scenario_parameters.get('doppler_standard_deviation'),
+        ])
 
     def get_state(self):
-        return self._state[[M1, M2, V1, AL, OM]] if self._polar else self._state
+        return self._state
 
     def reset(self):
-        self._state = self._rng.multivariate_normal(constants.PRIOR, np.diag(constants.PRIOR_COV)**2)
-        self._obstacles = np.array([self._rng.uniform(self._area[0], self._area[1], 4),
-                                    self._rng.uniform(self._area[2], self._area[3], 4)]).T
+        self._state = self._rng.multivariate_normal(self._prior, self._prior_covariance)
+        self._obstacles = self.__create_obstacles()
         self._trajectory = []
 
-    def propagate(self, time_difference, step_id=None):
-        if self._use_coordinated_turn:
-            error_mat = np.array([
-                [0.5*time_difference**2*np.cos(self._state[AL]), 0.0],
-                [0.5*time_difference**2*np.sin(self._state[AL]), 0.0],
-                [time_difference, 0.0],
-                [0.0, 0.0],
-                [0.0, 0.5*time_difference**2],
-                [0.0, time_difference]
-            ])
-            error = np.zeros(2)
-            if step_id is not None:
-                error[0] = 0.025 if int(step_id % 20) in [0, 1] else 0.025 if int(step_id % 20) in [10, 11] else 0.0
-                error[1] = 0.025*np.pi if int(step_id % 20) in [0, 1] else -0.05*np.pi if int(step_id % 20) in [10, 11] \
-                    else 0.0
-            error = self._rng.multivariate_normal(np.zeros(2), np.diag([self._sigma_a[0], self._sigma_w])**2)
-
-            self._state[[M1, M2, V1, AL, OM]] = np.array([
-                self._state[M1] + 2.0 * self._state[V1] / self._state[OM] * np.sin(0.5*self._state[OM]*time_difference)
-                    * np.cos(self._state[AL] + 0.5*self._state[OM]*time_difference),
-                self._state[M2] + 2.0 * self._state[V1] / self._state[OM] * np.sin(0.5*self._state[OM]*time_difference)
-                    * np.sin(self._state[AL] + 0.5*self._state[OM]*time_difference),
-                self._state[V1],
-                self._state[AL] + time_difference*self._state[OM],
-                self._state[OM]
-            ]) + (error_mat @ error)[[M1, M2, V1, AL, OM]]
-        else:
-            if self._polar:
-                tran_mat = np.eye(len(self._state))
-                tran_mat[M1, V1] = time_difference * np.cos(self._state[AL])
-                tran_mat[M2, V1] = time_difference * np.sin(self._state[AL])
-                tran_mat[AL, OM] = time_difference
-
-                error_mat = np.array([
-                    [0.5*time_difference**2*np.cos(self._state[AL]), 0.0],
-                    [0.5*time_difference**2*np.sin(self._state[AL]), 0.0],
-                    [time_difference, 0.0],
-                    [0.0, 0.0],
-                    [0.0, 0.5*time_difference**2],
-                    [0.0, time_difference]
-                ])
-                error = np.zeros(2)
-                if step_id is not None:
-                    error[0] = 0.025 if int(step_id % 20) in [0, 1] else 0.025 if int(step_id % 20) in [10, 11] else 0.0
-                    error[1] = 0.025*np.pi if int(step_id % 20) in [0, 1] else -0.05*np.pi if int(step_id % 20) in [10, 11] \
-                        else 0.0
-                error = self._rng.multivariate_normal(np.zeros(2), np.diag([self._sigma_a[0], self._sigma_w])**2)
-            else:
-                tran_mat = np.eye(len(self._state))
-                tran_mat[M1, V1] = time_difference
-                tran_mat[M2, V2] = time_difference
-                tran_mat[AL, OM] = time_difference
-
-                error_mat = np.array([
-                    [0.5*time_difference**2, 0.0, 0.0],
-                    [0.0, 0.5*time_difference**2, 0.0],
-                    [time_difference, 0.0, 0.0],
-                    [0.0, time_difference, 0.0],
-                    [0.0, 0.0, 0.5*time_difference**2],
-                    [0.0, 0.0, time_difference]
-                ])
-                error = np.zeros(3)
-                if step_id is not None:
-                    error[0] = 0.1 if int(step_id % 20) in [0, 1] else -0.1 if int(step_id % 20) in [10, 11] else 0.0
-                    error[2] = 0.05*np.pi if int(step_id % 20) in [0, 1] else -0.05*np.pi if int(step_id % 20) in [10, 11] \
-                        else 0.0
-                error = self._rng.multivariate_normal(np.zeros(3), np.diag([self._sigma_a[0], self._sigma_a[0], self._sigma_w])**2)
-
-            self._state = tran_mat @ self._state + error_mat @ error
+    def propagate(self, time_difference):
+        error_mat = self.__calculate_error_matrix(time_difference)
+        error = self._rng.multivariate_normal(np.zeros(2), np.diag([self._velocity_standard_deviation,
+                                                                    self._yaw_rate_standard_deviation])**2)
+        self._state = np.array([
+            self._state[M1] + 2.0 * self._state[V] / self._state[OM] * np.sin(0.5*self._state[OM]*time_difference)
+            * np.cos(self._state[AL] + 0.5*self._state[OM]*time_difference),
+            self._state[M2] + 2.0 * self._state[V] / self._state[OM] * np.sin(0.5*self._state[OM]*time_difference)
+            * np.sin(self._state[AL] + 0.5*self._state[OM]*time_difference),
+            self._state[V],
+            self._state[AL] + time_difference*self._state[OM],
+            self._state[OM]
+        ]) + (error_mat @ error)
 
         self._trajectory.append(self._state[[M1, M2, AL]])
+
+    def generate_data(self):
+        sensor_velocity_local = (np.array([self._state[V], 0.0])
+                                 + self._state[OM] * rot_mat(0.5*np.pi) @ self._center_of_rotation_shift)
+
+        detection_points_theta_r_doppler_intensity = self.__calculate_detection_points(sensor_velocity_local)
+        clutter_points_theta_r_doppler_intensity = self.__calculate_clutter_points()
+        detection_points_theta_r_doppler_intensity = np.vstack([detection_points_theta_r_doppler_intensity,
+                                                                clutter_points_theta_r_doppler_intensity])
+
+        return detection_points_theta_r_doppler_intensity
+
+    def __create_obstacles(self):
+        return np.array([self._rng.uniform(self._area[0], self._area[1], 4),
+                         self._rng.uniform(self._area[2], self._area[3], 4)]).T
+
+    def __calculate_error_matrix(self, time_difference):
+        return np.array([
+            [0.5*time_difference**2 * np.cos(self._state[AL]), 0.0],
+            [0.5*time_difference**2 * np.sin(self._state[AL]), 0.0],
+            [time_difference, 0.0],
+            [0.0, 0.5*time_difference**2],
+            [0.0, time_difference]
+        ])
+
+    def __calculate_obstacle_detections_and_velocity(self, obstacle_index, sensor_velocity_local):
+        obstacle_local_x_y = rot_mat(self._state[AL]).T @ (self._obstacles[obstacle_index] - self._state[[M1, M2]]
+                                                          - rot_mat(self._state[AL]) @ self._center_of_rotation_shift)
+        obstacle_polar_theta_r = np.array([np.arctan2(obstacle_local_x_y[1], obstacle_local_x_y[0]),
+                                           np.linalg.norm(obstacle_local_x_y)])
+        number_of_detections = np.maximum(1, self._rng.poisson(self._expected_number_of_measurements))
+        obstacle_detections_theta_r = self._rng.multivariate_normal(obstacle_polar_theta_r,
+                                                                    np.diag(self._standard_deviation_theta_r_doppler[:2])**2,
+                                                                    number_of_detections)
+        obstacle_velocity = np.array([np.cos(obstacle_polar_theta_r[0]),
+                                      np.sin(obstacle_polar_theta_r[0])]).T @ -sensor_velocity_local
+        obstacle_velocity_detections = self._rng.normal(obstacle_velocity,
+                                                        self._standard_deviation_theta_r_doppler[2]**2,
+                                                        len(obstacle_detections_theta_r))
+        return obstacle_detections_theta_r, obstacle_velocity_detections
+
+    def __calculate_detection_points(self, sensor_velocity_local):
+        detection_points_theta_r_doppler_intensity = np.zeros((0, 4))
+        for i in range(len(self._obstacles)):
+            obstacle_detections_theta_r, obstacle_velocity_detections \
+                = self.__calculate_obstacle_detections_and_velocity(i, sensor_velocity_local)
+            if len(obstacle_velocity_detections) > 0:
+                detection_points_theta_r_doppler_intensity = np.vstack([detection_points_theta_r_doppler_intensity,
+                                                                        np.vstack([obstacle_detections_theta_r[:, 0][None, :],
+                                                                                   obstacle_detections_theta_r[:, 1][None, :],
+                                                                                   obstacle_velocity_detections[None, :],
+                                                                                   np.ones((1, len(obstacle_detections_theta_r)))]).T
+                                                                        ])
+        return detection_points_theta_r_doppler_intensity
+
+    def __calculate_clutter_points(self):
+        number_of_clutter_points = self._rng.poisson(self._expected_number_of_clutter) \
+            if self._expected_number_of_clutter > 0 else 0
+        if number_of_clutter_points > 0:
+            clutter_cartesian = np.zeros((number_of_clutter_points, 2))
+
+            clutter_cartesian[:, 0] = self._rng.uniform(self._area[0], self._area[1], number_of_clutter_points)
+            clutter_cartesian[:, 1] = self._rng.uniform(self._area[2], self._area[3], number_of_clutter_points)
+            clutter_velocity = self._rng.multivariate_normal(np.zeros(number_of_clutter_points),
+                                                             np.diag(np.ones(number_of_clutter_points)
+                                                                     * self._clutter_doppler_noise ** 2))
+
+            clutter_points_theta_r_doppler_intensity = np.vstack([np.arctan2(clutter_cartesian[:, 1], clutter_cartesian[:, 0]),
+                                                                  np.linalg.norm(clutter_cartesian, axis=1),
+                                                                  clutter_velocity[None, :],
+                                                                  np.ones((1, number_of_clutter_points))
+                                                                  ]).T
+        else:
+            clutter_points_theta_r_doppler_intensity = np.zeros((0, 4))
+        return clutter_points_theta_r_doppler_intensity
 
     def plot_trajectory(self, arrow_length=0.5):
         import matplotlib.pyplot as plt
@@ -136,62 +146,3 @@ class Simulator2D(AbstractSimulator):
         plt.xlabel('x / m')
         plt.ylabel('y / m')
         plt.show()
-
-    def generate_data(self):
-        # determine sensor velocity
-        if self._polar:
-            vel_local = np.array([self._state[V1], 0.0])
-        else:
-            vel_local = rot_mat(self._state[AL]).T @ self._state[[V1, V2]]
-        ego_velocity_local = vel_local + self._state[OM] * rot_mat(0.5*np.pi) @ self._center_of_rotation_shift
-
-        # calculate points
-        points = np.zeros((0, 5))
-        for i in range(len(self._obstacles)):
-            obstacle_local = rot_mat(self._state[AL]).T @ (self._obstacles[i] - self._state[[M1, M2]]
-                                                           - rot_mat(self._state[AL]) @ self._center_of_rotation_shift)
-            obstacle_polar = np.array([np.arctan2(obstacle_local[1], obstacle_local[0]),
-                                       np.linalg.norm(obstacle_local)])
-            obstacle_detections = self._rng.multivariate_normal(obstacle_polar, np.diag(self._detection_noise[:2])**2,
-                                                                np.maximum(1, self._rng.poisson(self._lam_n_points)))
-            obstacle_velocity = np.array([np.cos(obstacle_polar[0]),
-                                         np.sin(obstacle_polar[0])]).T @ -ego_velocity_local
-            obstacle_velocity_detections = self._rng.normal(obstacle_velocity, self._detection_noise[2],
-                                                            len(obstacle_detections))
-            if len(obstacle_velocity_detections) > 0:
-                points = np.vstack([points,
-                                    np.vstack([obstacle_detections[:, 0][None, :],
-                                               np.zeros((1, len(obstacle_detections))),  # no elevation
-                                               obstacle_detections[:, 1][None, :],
-                                               obstacle_velocity_detections[None, :],
-                                               np.ones((1, len(obstacle_detections)))]).T
-                                    ])
-        if self._lam_clutter > 0:
-            n_clutter = self._rng.poisson(self._lam_clutter)
-            if n_clutter > 0:
-                clutter_cartesian = np.zeros((n_clutter, 2))
-
-                clutter_cartesian[:, 0] = self._rng.uniform(self._area[0], self._area[1], n_clutter)
-                clutter_cartesian[:, 1] = self._rng.uniform(self._area[2], self._area[3], n_clutter)
-
-                points = np.vstack([points,
-                                    np.vstack([np.arctan2(clutter_cartesian[:, 1], clutter_cartesian[:, 0]),
-                                               np.zeros((1, n_clutter)),
-                                               np.linalg.norm(clutter_cartesian, axis=1),
-                                               self._rng.multivariate_normal(np.zeros(n_clutter),
-                                                                             np.diag(np.ones(n_clutter)
-                                                                                     * self._clutter_noise**2))[None, :],
-                                               np.ones((1, n_clutter))]).T
-                                    ])
-        else:
-            n_clutter = 0
-
-        # import matplotlib.pyplot as plt
-        # plt.xlim(-0.5*np.pi, 0.5*np.pi)
-        # angle_bins = np.linspace(-0.5*np.pi, 0.5*np.pi, 100)
-        # plt.plot(angle_bins, np.array([np.cos(angle_bins), np.sin(angle_bins)]).T @ vel_local, color='blue')
-        # plt.scatter(points[:(len(points)-n_clutter), 0], -points[:(len(points)-n_clutter), 3], color='blue')
-        # plt.scatter(points[(len(points)-n_clutter):, 0], -points[(len(points)-n_clutter):, 3], color='red')
-        # plt.show()
-
-        return points, n_clutter

@@ -84,7 +84,7 @@ class RadarDataProcessor:
             radar_frame_range_velocity_channel[:, :, i] = calculate_range_doppler_image(frame_data[i])
         return radar_frame_range_velocity_channel
 
-    def __identify_detections_in_polar_coordinates(self, radar_frame_range_velocity_channel):
+    def __identify_detections_in_polar_coordinates(self, radar_frame_range_velocity_channel, keep_elevation=False):
         detection_intensities_per_channel, detection_ranges, detection_dopplers\
             = self.__identify_detections_intensity_per_channel_range_and_doppler_using_cfar(radar_frame_range_velocity_channel)
         detections_in_polar = np.array([
@@ -95,7 +95,7 @@ class RadarDataProcessor:
             np.mean(abs(detection_intensities_per_channel), axis=0),
             ]).T
         filtered_detections_in_polar = self.__filter_detections_by_intensity(detections_in_polar)
-        return filtered_detections_in_polar
+        return filtered_detections_in_polar if keep_elevation else filtered_detections_in_polar[:, [0, 2, 3, 4]]
 
     def __identify_detections_intensity_per_channel_range_and_doppler_using_cfar(self, radar_frame_range_velocity_channel):
         abs_data = np.sum(abs(radar_frame_range_velocity_channel), axis=2)
