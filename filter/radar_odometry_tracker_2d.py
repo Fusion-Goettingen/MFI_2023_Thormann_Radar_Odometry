@@ -11,7 +11,7 @@ MODE_GNC = 3
 MODE_GNC_THETA = 4
 
 MODE_COLORS = ['red', 'blue', 'green', 'cyan', 'lightgreen']
-MODE_LABELS = ['baseline', 'RANSAC', 'RANSAC (AoA noise)', 'GNC', 'GNC (AoA noise)']
+MODE_LABELS = ['baseline', 'RANSAC', 'RANSAC (bearing noise)', 'GNC', 'GNC (bearing noise)']
 MODE_MARKERS = ['*', '+', '+', 'x', 'x']
 
 
@@ -158,20 +158,20 @@ class RadarOdometryTracker2D(AbstractFilter):
     def __calculate_angle_of_arrival_noise_parameters(self, points_polar):
         theta_cov = np.array([
             [0.5 + 0.5 * np.cos(2 * points_polar[:, measurement_index['bearing']]) * np.exp(-2 * self._theta_standard_deviation ** 2)
-             - np.cos(points_polar[:, measurement_index['bearing']]) ** 2 * np.exp(-self._theta_standard_deviation ** 2),
+             + (np.cos(points_polar[:, measurement_index['bearing']])**2) * (np.exp(self._theta_standard_deviation ** 2) - 2.0),
              0.5 * np.sin(2 * points_polar[:, measurement_index['bearing']]) * np.exp(-2 * self._theta_standard_deviation ** 2)
-             - np.cos(points_polar[:, measurement_index['bearing']]) * np.sin(points_polar[:, measurement_index['bearing']]) * np.exp(-self._theta_standard_deviation ** 2)],
+             + (np.cos(points_polar[:, measurement_index['bearing']]) * np.sin(points_polar[:, measurement_index['bearing']])) * (np.exp(self._theta_standard_deviation ** 2) - 2.0)],
             [0.5 * np.sin(2 * points_polar[:, measurement_index['bearing']]) * np.exp(-2 * self._theta_standard_deviation ** 2)
-             - np.cos(points_polar[:, measurement_index['bearing']]) * np.sin(points_polar[:, measurement_index['bearing']]) * np.exp(-self._theta_standard_deviation ** 2),
+             + (np.cos(points_polar[:, measurement_index['bearing']]) * np.sin(points_polar[:, measurement_index['bearing']])) * (np.exp(self._theta_standard_deviation ** 2) - 2.0),
              0.5 - 0.5 * np.cos(2 * points_polar[:, measurement_index['bearing']]) * np.exp(-2 * self._theta_standard_deviation ** 2)
-             - np.sin(points_polar[:, measurement_index['bearing']]) ** 2 * np.exp(-self._theta_standard_deviation ** 2)]
+             + (np.sin(points_polar[:, measurement_index['bearing']]) ** 2) * (np.exp(self._theta_standard_deviation ** 2) - 2.0)]
         ]).transpose((2, 0, 1))
-        theta_bias = ((np.exp(-0.5 * self._theta_standard_deviation ** 2) - 1.0)
-                      * np.array([np.cos(points_polar[:, measurement_index['bearing']]),
-                                  np.sin(points_polar[:, measurement_index['bearing']])]).T)
-        return theta_bias, theta_cov
+        return theta_cov
 
-    def __find_velocity_estimate_via_gnc(self, points_polar, velocity_hat, theta_bias, theta_cov):
+    def __debias_h_mat(self):
+        self._h_mat = self._h_mat * np.exp(0.5 * self._theta_standard_deviation**2)
+
+    def __find_velocity_estimate_via_gnc(self, points_polar, velocity_hat, theta_cov):
         # based on Y. Zhuang, B. Wang, J. Huai, and M. Li, “4D iRIOM: 4D Imaging Radar Inertial Odometry and
         # Mapping,” IEEE Robotics and Automation Letters, vol. 8, no. 6, pp. 3246–3253, Jun. 2023,
         # doi: 10.1109/LRA.2023.3266669.
@@ -180,8 +180,7 @@ class RadarOdometryTracker2D(AbstractFilter):
         y_cov = np.eye(len(y_ls)) * 1e6  # no info if no velocity can be identified
         ls_gain = invert(self._h_mat.T @ weights @ self._h_mat) @ self._h_mat.T @ weights
         if self._use_theta_noise:
-            r2_max = np.max((points_polar[:, measurement_index['doppler']] - theta_bias @ y_ls
-                             - self._h_mat @ velocity_hat)**2)
+            r2_max = np.max((points_polar[:, measurement_index['doppler']] - self._h_mat @ velocity_hat)**2)
 
             jac = np.array([
                 [-1, self._center_of_rotation_shift_local[1]],
@@ -194,10 +193,7 @@ class RadarOdometryTracker2D(AbstractFilter):
                    + np.array([np.trace(self._cov[[state_index['velocity'],
                                                    state_index['omega']]][:, [state_index['velocity'], state_index['omega']]]
                                         @ jac.T @ theta_cov[t] @ jac)
-                               for t in range(len(theta_cov))])
-                   + np.einsum('na, ab, bc, dc, nd -> n', theta_bias, jac,
-                               self._cov[[state_index['velocity'], state_index['omega']]][:, [state_index['velocity'], state_index['omega']]],
-                               jac, theta_bias))
+                               for t in range(len(theta_cov))]))
             c_dash_2 = 4.0 * (self._doppler_standard_deviation ** 2 + error_cov_theta)
         else:
             r2_max = np.max((points_polar[:, measurement_index['doppler']] - self._h_mat @ velocity_hat) ** 2)
@@ -206,8 +202,8 @@ class RadarOdometryTracker2D(AbstractFilter):
         condition = mu > 0.0
         while condition:
             if self._use_theta_noise:
-                y_ls = ls_gain @ (points_polar[:, measurement_index['doppler']] - theta_bias @ velocity_hat)
-                r_i = points_polar[:, measurement_index['doppler']] - theta_bias @ velocity_hat - self._h_mat @ y_ls
+                y_ls = ls_gain @ (points_polar[:, measurement_index['doppler']])
+                r_i = points_polar[:, measurement_index['doppler']] - self._h_mat @ y_ls
             else:
                 y_ls = ls_gain @ points_polar[:, measurement_index['doppler']]
                 r_i = points_polar[:, measurement_index['doppler']] - self._h_mat @ y_ls
@@ -226,10 +222,7 @@ class RadarOdometryTracker2D(AbstractFilter):
                            + np.array([np.trace(self._cov[[state_index['velocity'],
                                                            state_index['omega']]][:, [state_index['velocity'], state_index['omega']]]
                                                 @ jac.T @ theta_cov[t] @ jac)
-                                       for t in range(len(theta_cov))])
-                           + np.einsum('na, ab, bc, dc, nd -> n', theta_bias, jac,
-                                       self._cov[[state_index['velocity'], state_index['omega']]][:, [state_index['velocity'], state_index['omega']]],
-                                       jac, theta_bias))
+                                       for t in range(len(theta_cov))]))
                     c_dash_2 = 4.0 * (self._doppler_standard_deviation ** 2 + error_cov_theta)
                 else:
                     c_dash_2 = 4.0 * self._doppler_standard_deviation ** 2
@@ -248,10 +241,7 @@ class RadarOdometryTracker2D(AbstractFilter):
                        + np.array([np.trace(self._cov[[state_index['velocity'],
                                                        state_index['omega']]][:, [state_index['velocity'], state_index['omega']]]
                                             @ jac.T @ theta_cov[t] @ jac)
-                                   for t in range(len(theta_cov))])
-                       + np.einsum('na, ab, bc, dc, nd -> n', theta_bias, jac,
-                                   self._cov[[state_index['velocity'], state_index['omega']]][:, [state_index['velocity'], state_index['omega']]],
-                                   jac, theta_bias))
+                                   for t in range(len(theta_cov))]))
                 y_cov = ls_gain \
                         @ (np.eye(len(points_polar))
                            * (self._doppler_standard_deviation ** 2 + error_cov_theta)) \
@@ -261,7 +251,7 @@ class RadarOdometryTracker2D(AbstractFilter):
 
         return y, y_cov
 
-    def __find_velocity_via_ransac(self, points_polar, velocity_hat, theta_bias, theta_cov):
+    def __find_velocity_via_ransac(self, points_polar, velocity_hat, theta_cov):
         # based on C. Doer and G. F. Trommer, “An EKF Based Approach to Radar Inertial Odometry,” in 2020 IEEE
         # International Conference on Multisensor Fusion and Integration for Intelligent Systems (MFI), Sep. 2020,
         # pp. 152–159, doi: 10.1109/MFI49285.2020.9235254.
@@ -289,9 +279,8 @@ class RadarOdometryTracker2D(AbstractFilter):
             ls_gain = (invert(self._h_mat[key_points].T @ np.diag(weights[key_points]) @ self._h_mat[key_points])
                        @ self._h_mat[key_points].T @ np.diag(weights[key_points]))
             if self._use_theta_noise:
-                current_y_ls = ls_gain @ (points_polar[key_points, measurement_index['doppler']]
-                                          - theta_bias[key_points] @ velocity_hat)
-                inlier_mask = (abs((points_polar[:, measurement_index['doppler']] - theta_bias @ velocity_hat)
+                current_y_ls = ls_gain @ (points_polar[key_points, measurement_index['doppler']])
+                inlier_mask = (abs((points_polar[:, measurement_index['doppler']])
                                    - self._h_mat @ current_y_ls)
                                < inlier_threshold)
             else:
@@ -304,8 +293,7 @@ class RadarOdometryTracker2D(AbstractFilter):
                 best_inlier_mask = inlier_mask.copy()
                 if self._use_theta_noise:
                     err = (self._h_mat[inlier_mask] @ current_y_ls
-                           - (points_polar[inlier_mask, measurement_index['doppler']]
-                              - theta_bias[inlier_mask] @ velocity_hat))
+                           - points_polar[inlier_mask, measurement_index['doppler']])
                 else:
                     err = (self._h_mat[inlier_mask] @ current_y_ls
                            - points_polar[inlier_mask, measurement_index['doppler']])
@@ -319,8 +307,7 @@ class RadarOdometryTracker2D(AbstractFilter):
                 if any(np.array([np.isclose(np.diag(y_cov)[t], 0.0) for t in range(2)])):
                     y_cov += np.eye(2) * 1e-8
                 if self._use_theta_noise:
-                    y_ls = ls_gain @ (points_polar[inlier_mask, measurement_index['doppler']]
-                                      - theta_bias[inlier_mask] @ velocity_hat)
+                    y_ls = ls_gain @ points_polar[inlier_mask, measurement_index['doppler']]
                 else:
                     y_ls = ls_gain @ points_polar[inlier_mask, measurement_index['doppler']]
         y = y_ls
@@ -340,10 +327,7 @@ class RadarOdometryTracker2D(AbstractFilter):
                        + np.array([np.trace(self._cov[[state_index['velocity'],
                                                        state_index['omega']]][:, [state_index['velocity'], state_index['omega']]]
                                             @ jac.T @ theta_cov[best_inlier_mask][t] @ jac)
-                                   for t in range(np.sum(best_inlier_mask))])
-                       + np.einsum('na, ab, bc, dc, nd -> n', theta_bias[best_inlier_mask], jac,
-                                   self._cov[[state_index['velocity'], state_index['omega']]][:, [state_index['velocity'], state_index['omega']]],
-                                   jac, theta_bias[best_inlier_mask]))
+                                   for t in range(np.sum(best_inlier_mask))]))
                 y_cov_analytical = ls_gain @ (np.eye(np.sum(best_inlier_mask))
                                               * (self._doppler_standard_deviation ** 2 + error_cov_theta)) @ ls_gain.T
                 y_cov = y_cov_analytical
@@ -365,16 +349,18 @@ class RadarOdometryTracker2D(AbstractFilter):
         return y, y_cov
 
     def __estimate_velocity(self, points_polar, velocity_hat):
-        theta_bias, theta_cov = self.__calculate_angle_of_arrival_noise_parameters(points_polar)
+        theta_cov = self.__calculate_angle_of_arrival_noise_parameters(points_polar)
+        if self._use_theta_noise:
+            self.__debias_h_mat()
 
         velocity_found = True
         if self._mode in [MODE_GNC, MODE_GNC_THETA]:
             ls_velocity, ls_velocity_covariance = self.__find_velocity_estimate_via_gnc(points_polar, velocity_hat,
-                                                                                        theta_bias, theta_cov)
+                                                                                        theta_cov)
         elif self._mode in [MODE_RANSAC, MODE_RANSAC_THETA]:
             ls_velocity, ls_velocity_covariance, velocity_found = self.__find_velocity_via_ransac(points_polar,
                                                                                                   velocity_hat,
-                                                                                                  theta_bias, theta_cov)
+                                                                                                  theta_cov)
         else:
             ls_velocity, ls_velocity_covariance = self.__find_velocity_via_baseline(points_polar)
 
