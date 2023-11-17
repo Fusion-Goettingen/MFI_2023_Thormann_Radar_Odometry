@@ -2,12 +2,7 @@ import numpy as np
 
 from simulator.abstract_simulator import AbstractSimulator
 from utils import rot_mat
-
-M1 = 0
-M2 = 1
-V = 2
-AL = 3
-OM = 4
+from array_indices import state_index
 
 
 class Simulator2D(AbstractSimulator):
@@ -19,7 +14,7 @@ class Simulator2D(AbstractSimulator):
         self._state = self._rng.multivariate_normal(self._prior, self._prior_covariance)
 
         self._trajectory = []
-        self._trajectory.append(self._state[[M1, M2, AL]])
+        self._trajectory.append(self._state[[state_index['m1'], state_index['m2'], state_index['angle']]])
 
         self._center_of_rotation_shift = scenario_parameters.get('center_of_rotation_shift_local')
         self._velocity_standard_deviation = scenario_parameters.get('velocity_standard_deviation')
@@ -51,20 +46,21 @@ class Simulator2D(AbstractSimulator):
         error = self._rng.multivariate_normal(np.zeros(2), np.diag([self._velocity_standard_deviation,
                                                                     self._yaw_rate_standard_deviation])**2)
         self._state = np.array([
-            self._state[M1] + 2.0 * self._state[V] / self._state[OM] * np.sin(0.5*self._state[OM]*time_difference)
-            * np.cos(self._state[AL] + 0.5*self._state[OM]*time_difference),
-            self._state[M2] + 2.0 * self._state[V] / self._state[OM] * np.sin(0.5*self._state[OM]*time_difference)
-            * np.sin(self._state[AL] + 0.5*self._state[OM]*time_difference),
-            self._state[V],
-            self._state[AL] + time_difference*self._state[OM],
-            self._state[OM]
+            self._state[state_index['m1']] + 2.0 * self._state[state_index['velocity']] / self._state[state_index['omega']] * np.sin(0.5*self._state[state_index['omega']]*time_difference)
+            * np.cos(self._state[state_index['angle']] + 0.5*self._state[state_index['omega']]*time_difference),
+            self._state[state_index['m2']] + 2.0 * self._state[state_index['velocity']] / self._state[state_index['omega']] * np.sin(0.5*self._state[state_index['omega']]*time_difference)
+            * np.sin(self._state[state_index['angle']] + 0.5*self._state[state_index['omega']]*time_difference),
+            self._state[state_index['velocity']],
+            self._state[state_index['angle']] + time_difference*self._state[state_index['omega']],
+            self._state[state_index['omega']]
         ]) + (error_mat @ error)
 
-        self._trajectory.append(self._state[[M1, M2, AL]])
+        self._trajectory.append(self._state[[state_index['m1'], state_index['m2'], state_index['angle']]])
 
     def generate_data(self):
-        sensor_velocity_local = (np.array([self._state[V], 0.0])
-                                 + self._state[OM] * rot_mat(0.5*np.pi) @ self._center_of_rotation_shift)
+        sensor_velocity_local = (np.array([self._state[state_index['velocity']], 0.0])
+                                 + self._state[state_index['omega']] * rot_mat(0.5*np.pi)
+                                 @ self._center_of_rotation_shift)
 
         detection_points_theta_r_doppler_intensity = self.__calculate_detection_points(sensor_velocity_local)
         clutter_points_theta_r_doppler_intensity = self.__calculate_clutter_points()
@@ -79,16 +75,17 @@ class Simulator2D(AbstractSimulator):
 
     def __calculate_error_matrix(self, time_difference):
         return np.array([
-            [0.5*time_difference**2 * np.cos(self._state[AL]), 0.0],
-            [0.5*time_difference**2 * np.sin(self._state[AL]), 0.0],
+            [0.5*time_difference**2 * np.cos(self._state[state_index['angle']]), 0.0],
+            [0.5*time_difference**2 * np.sin(self._state[state_index['angle']]), 0.0],
             [time_difference, 0.0],
             [0.0, 0.5*time_difference**2],
             [0.0, time_difference]
         ])
 
     def __calculate_obstacle_detections_and_velocity(self, obstacle_index, sensor_velocity_local):
-        obstacle_local_x_y = rot_mat(self._state[AL]).T @ (self._obstacles[obstacle_index] - self._state[[M1, M2]]
-                                                          - rot_mat(self._state[AL]) @ self._center_of_rotation_shift)
+        obstacle_local_x_y = (rot_mat(self._state[state_index['angle']]).T
+                              @ (self._obstacles[obstacle_index] - self._state[[state_index['m1'], state_index['m2']]]
+                                 - rot_mat(self._state[state_index['angle']]) @ self._center_of_rotation_shift))
         obstacle_polar_theta_r = np.array([np.arctan2(obstacle_local_x_y[1], obstacle_local_x_y[0]),
                                            np.linalg.norm(obstacle_local_x_y)])
         number_of_detections = np.maximum(1, self._rng.poisson(self._expected_number_of_measurements))

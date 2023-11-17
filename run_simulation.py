@@ -31,22 +31,20 @@ def get_scenario_parameters_from_scenario(scenario):
     return this_scenario_parameters
 
 
-def prepare_trackers(initial_timestep, this_scenario_parameters, rng_seed, real_data):
+def prepare_trackers(initial_timestep, this_scenario_parameters, rng_seeder, real_data, runs, time_steps):
     trackers = []
+    rng_seed = rng_seeder.integers(0, 9999)
     for mode in RadarOdometryTracker2D.get_valid_modes():
         trackers.append(RadarOdometryTracker2D(initial_timestep, this_scenario_parameters, mode=mode,
-                                               rng=np.random.default_rng(rng_seed), real_data=real_data))
+                                               rng=np.random.default_rng(rng_seed), runs=runs,  time_steps=time_steps,
+                                               real_data=real_data))
     return trackers
 
 
-def calculate_squared_error(true_state, ego_state, angle_index):
-    return calculate_error(true_state, ego_state, angle_index)**2
-
-
-def calculate_error(true_state, ego_state, angle_index):
-    error = true_state - ego_state
-    error[angle_index] = ((error[angle_index] + np.pi) % (2.0*np.pi)) - np.pi
-    return error
+def reset_trackers(trackers, rng_seeder):
+    rng_seed = rng_seeder.integers(0, 9999)
+    for tracker in trackers:
+        tracker.reset(np.random.default_rng(rng_seed))
 
 
 def main(scenario, plot_single_timestep, plot_final_trajectory, radar_config_path, paper_mode):
@@ -71,14 +69,12 @@ def main(scenario, plot_single_timestep, plot_final_trajectory, radar_config_pat
                       display_legend_on_barplot=(scenario in [SCENARIO_NO_CLUTTER, SCENARIO_STRAIGHT]))
     if plot_single_timestep:
         plotter.initialize_plotting_of_timesteps()
-    error = np.zeros((len(RadarOdometryTracker2D.get_valid_modes()), runs, time_steps, 5))
+
+    trackers = prepare_trackers(initial_timestamp, this_scenario_parameters, rng_seeder, real_data, runs, time_steps)
 
     for r in tqdm(range(runs)):
-        rng_seed = rng_seeder.integers(0, 9999)
         current_timestamp = initial_timestamp
         last_timestamp = initial_timestamp
-
-        trackers = prepare_trackers(last_timestamp, this_scenario_parameters, rng_seed, real_data)
 
         for i in range(time_steps):
             if real_data:
@@ -90,12 +86,10 @@ def main(scenario, plot_single_timestep, plot_final_trajectory, radar_config_pat
                 true_state = simulator.get_state()
 
             ego_states = []
-            current_errors = []
             for tracker in trackers:
                 tracker.update(points, current_timestamp)
                 ego_states.append(tracker.get_state())
-                current_errors.append(calculate_squared_error(true_state, tracker.get_state(), angle_index=3))
-            error[:, r, i] = np.array(current_errors)
+                tracker.calculate_squared_error(true_state, r, i)
 
             if plot_single_timestep:
                 plotter.plot_ego_pose_2d(trackers, radar_data_processor.get_max_range_m(),
@@ -112,9 +106,10 @@ def main(scenario, plot_single_timestep, plot_final_trajectory, radar_config_pat
         if plot_final_trajectory:
             simulator.plot_trajectory()
         simulator.reset()
+        reset_trackers(trackers, rng_seeder)
 
         if r == (runs-1):
-            plotter.plot_errors(error, trackers)
+            plotter.plot_errors(trackers)
 
 
 if __name__ == "__main__":

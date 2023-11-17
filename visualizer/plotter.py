@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Arrow
 from matplotlib.ticker import FormatStrFormatter
 
-import constants
+from array_indices import measurement_index
 
 ERROR_FIGURE_PATH = './error_figures'
 
@@ -23,11 +23,13 @@ class Plotter:
     def plot_2d_points_doppler(self, points_polar, max_range_m, max_angle_degrees, step, progressed_time=None,
                                extent=None):
         assert self._ax is not None
-        points = np.array([np.cos(points_polar[:, constants.A]) * points_polar[:, constants.R],
-                           np.sin(points_polar[:, constants.A]) * points_polar[:, constants.R],
+        points = np.array([np.cos(points_polar[:, measurement_index['bearing']])
+                           * points_polar[:, measurement_index['range']],
+                           np.sin(points_polar[:, measurement_index['bearing']])
+                           * points_polar[:, measurement_index['range']],
                            np.zeros(len(points_polar)),
-                           points_polar[:, constants.D],
-                           points_polar[:, constants.I]]).T
+                           points_polar[:, measurement_index['doppler']],
+                           points_polar[:, measurement_index['intensity']]]).T
 
         minmin = 8
         maxmax = 15
@@ -46,18 +48,20 @@ class Plotter:
         self._ax[0].set_xlim(extent[:2])
         self._ax[0].set_ylim(extent[2:])
 
-        self._ax[0].scatter(points[:, constants.X], points[:, constants.Y], c=points[:, constants.I], cmap='viridis_r')
+        self._ax[0].scatter(points[:, measurement_index['m1']], points[:, measurement_index['m2']],
+                            c=points[:, measurement_index['intensity']], cmap='viridis_r')
 
-        points_d = points[abs(points[:, constants.D]) != 0.0]
+        points_d = points[abs(points[:, measurement_index['doppler']]) != 0.0]
         cmap = plt.cm.viridis_r
-        color_inds = np.array(np.maximum(np.minimum((points_d[:, constants.I] - minmin) / maxmax * 255, 255), 0), int)
+        color_inds = np.array(np.maximum(np.minimum((points_d[:, measurement_index['intensity']] - minmin)
+                                                    / maxmax * 255, 255), 0), int)
         for i in range(len(points_d)):
-            self._ax[0].add_patch(Arrow(points_d[i, constants.X], points_d[i, constants.Y],
-                                     points_d[i, constants.X] * points_d[i, constants.D]
-                                     / np.linalg.norm(points_d[i, [constants.X, constants.Y]]),
-                                     points_d[i, constants.Y] * points_d[i, constants.D]
-                                     / np.linalg.norm(points_d[i, [constants.X, constants.Y]]),
-                                     color=cmap.colors[color_inds[i]], width=0.1))
+            self._ax[0].add_patch(Arrow(points_d[i, measurement_index['m1']], points_d[i, measurement_index['m2']],
+                                        points_d[i, measurement_index['m1']] * points_d[i, measurement_index['doppler']]
+                                        / np.linalg.norm(points_d[i, [measurement_index['m1'], measurement_index['m2']]]),
+                                        points_d[i, measurement_index['m2']] * points_d[i, measurement_index['doppler']]
+                                        / np.linalg.norm(points_d[i, [measurement_index['m1'], measurement_index['m2']]]),
+                                        color=cmap.colors[color_inds[i]], width=0.1))
 
         title = f'Step: {step:03d}'
         if progressed_time is not None:
@@ -91,26 +95,30 @@ class Plotter:
         if ground_truth is not None:
             pose_vector_gt = np.array([np.cos(ground_truth[angle_index]), np.sin(ground_truth[angle_index])])
             self._ax[1].quiver(ground_truth[0], ground_truth[1], pose_vector_gt[0], pose_vector_gt[1], color='black',
-                            alpha=0.5)
+                               alpha=0.5)
 
-    def plot_errors(self, error, trackers):
-        assert len(error) == len(trackers)
-
+    def plot_errors(self, trackers):
         if not os.path.isdir(ERROR_FIGURE_PATH):
             os.mkdir(ERROR_FIGURE_PATH)
         scenario_figure_path = os.path.join(ERROR_FIGURE_PATH, self._scenario_name)
         if not os.path.isdir(scenario_figure_path):
             os.mkdir(scenario_figure_path)
 
+        error = []
+        for tracker in trackers:
+            error.append(tracker.get_error())
+        error = np.array(error)
+
         if self._real_data:
             plt.style.use(f"./stylesheets/paperstyle.mplstyle")
             fig_s, ax_s = plt.subplots(1, 1)
-            width = 0.8 / len(error)
-            for i in range(len(error)):
-                ax_s.bar(np.array(range(error.shape[-1])) - 0.4 + i*width, np.sqrt(np.mean(error[i, :, -1], axis=0)), width,
-                         align='edge', color=trackers[i].get_color(), label=trackers[i].get_label(),
+            width = 0.8 / len(trackers)
+            for i in range(len(trackers)):
+                ax_s.bar(np.array(range(error.shape[-1])) - 0.4 + i*width, np.sqrt(np.mean(error[i, :, -1], axis=0)),
+                         width, align='edge', color=trackers[i].get_color(), label=trackers[i].get_label(),
                          hatch=trackers[i].get_marker())
-            ax_s.set_xticks(np.array(range(error.shape[-1])), np.array(["$m_1$", "$m_2$", "$v$", "$\\alpha$", "$\\omega$"]))
+            ax_s.set_xticks(np.array(range(error.shape[-1])),
+                            np.array(["$m_1$", "$m_2$", "$v$", "$\\alpha$", "$\\omega$"]))
 
             ax_s.set_ylabel('RMSE')
             fig_s.tight_layout()
@@ -122,7 +130,6 @@ class Plotter:
             else:
                 ax_s.set_title('Error over trajectory')
             plt.show()
-
         else:
             plt.style.use(f"./stylesheets/paperstyle.mplstyle")
             fig_s, ax_s = plt.subplots(1, 1)
@@ -133,25 +140,30 @@ class Plotter:
             fig_l, ax_l = plt.subplots(1, 1)
             axs_e = np.array([[ax_e11, ax_e12], [ax_e21, ax_e22]])
             time_steps = error.shape[2]
-            for i in range(len(error)):
-                width = 0.8 / len(error)
-                ax_s.bar(np.array(range(error.shape[-1])) - 0.4 + i*width, np.sqrt(np.mean(error[i], axis=(0, 1))), width,
-                         align='edge', color=trackers[i].get_color(), label=trackers[i].get_label(),
+            for i in range(len(trackers)):
+                width = 0.8 / len(trackers)
+                ax_s.bar(np.array(range(error.shape[-1])) - 0.4 + i*width, np.sqrt(np.mean(error[i], axis=(0, 1))),
+                         width, align='edge', color=trackers[i].get_color(), label=trackers[i].get_label(),
                          hatch=trackers[i].get_marker())
 
                 axs_e[0, 0].plot(np.arange(0, time_steps), np.sqrt(np.mean(np.sum(error[i, :, :, :2], axis=2), axis=0)),
-                                 color=trackers[i].get_color(), label=trackers[i].get_label(), marker=trackers[i].get_marker())
+                                 color=trackers[i].get_color(), label=trackers[i].get_label(),
+                                 marker=trackers[i].get_marker())
                 axs_e[0, 1].plot(np.arange(0, time_steps), np.sqrt(np.mean(error[i, :, :, 2], axis=0)),
-                                 color=trackers[i].get_color(), label=trackers[i].get_label(), marker=trackers[i].get_marker())
+                                 color=trackers[i].get_color(), label=trackers[i].get_label(),
+                                 marker=trackers[i].get_marker())
                 axs_e[1, 0].plot(np.arange(0, time_steps), np.sqrt(np.mean(error[i, :, :, 3], axis=0)),
-                                 color=trackers[i].get_color(), label=trackers[i].get_label(), marker=trackers[i].get_marker())
+                                 color=trackers[i].get_color(), label=trackers[i].get_label(),
+                                 marker=trackers[i].get_marker())
                 axs_e[1, 1].plot(np.arange(0, time_steps), np.sqrt(np.mean(error[i, :, :, 4], axis=0)),
-                                 color=trackers[i].get_color(), label=trackers[i].get_label(), marker=trackers[i].get_marker())
+                                 color=trackers[i].get_color(), label=trackers[i].get_label(),
+                                 marker=trackers[i].get_marker())
 
                 ax_l.plot(np.arange(0, time_steps), np.sqrt(np.mean(np.sum(error[i, :, :, :], axis=2), axis=0)),
                           color=trackers[i].get_color(), label=trackers[i].get_label(), marker=trackers[i].get_marker())
 
-            ax_s.set_xticks(np.array(range(error.shape[-1])), np.array(["$m_1$", "$m_2$", "$v$", "$\\alpha$", "$\\omega$"]))
+            ax_s.set_xticks(np.array(range(error.shape[-1])),
+                            np.array(["$m_1$", "$m_2$", "$v$", "$\\alpha$", "$\\omega$"]))
             ax_s.set_ylabel('RMSE')
 
             axs_e[0, 0].set_xlabel('time step')
@@ -187,12 +199,18 @@ class Plotter:
             ax_l.legend(loc='upper left')
             ax_l.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
 
-            fig_s.savefig(os.path.join(scenario_figure_path, 'individual_error_RMSE_' + self._scenario_name))
-            fig_e11.savefig(os.path.join(scenario_figure_path, 'position_RMSE_' + self._scenario_name))
-            fig_e12.savefig(os.path.join(scenario_figure_path, 'velocity_RMSE_' + self._scenario_name))
-            fig_e21.savefig(os.path.join(scenario_figure_path, 'orientation_RMSE_' + self._scenario_name))
-            fig_e22.savefig(os.path.join(scenario_figure_path, 'yawrate_RMSE_' + self._scenario_name))
-            fig_l.savefig(os.path.join(scenario_figure_path, 'overall_RMSE_' + self._scenario_name))
+            fig_s.savefig(os.path.join(scenario_figure_path, 'individual_error_RMSE_' + self._scenario_name),
+                          bbox_inches='tight')
+            fig_e11.savefig(os.path.join(scenario_figure_path, 'position_RMSE_' + self._scenario_name),
+                            bbox_inches='tight')
+            fig_e12.savefig(os.path.join(scenario_figure_path, 'velocity_RMSE_' + self._scenario_name),
+                            bbox_inches='tight')
+            fig_e21.savefig(os.path.join(scenario_figure_path, 'orientation_RMSE_' + self._scenario_name),
+                            bbox_inches='tight')
+            fig_e22.savefig(os.path.join(scenario_figure_path, 'yawrate_RMSE_' + self._scenario_name),
+                            bbox_inches='tight')
+            fig_l.savefig(os.path.join(scenario_figure_path, 'overall_RMSE_' + self._scenario_name),
+                          bbox_inches='tight')
             if not self._paper_mode:
                 ax_s.set_title('Error over trajectory')
                 axs_e[0, 0].set_title('Positional error over time')
