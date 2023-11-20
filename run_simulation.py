@@ -47,10 +47,10 @@ def reset_trackers(trackers, rng_seeder):
         tracker.reset(np.random.default_rng(rng_seed))
 
 
-def main(scenario, plot_single_timestep, plot_final_trajectory, radar_config_path, paper_mode):
+def main(scenario, plot_single_run, plot_final_trajectory, radar_config_path, paper_mode):
     this_scenario_parameters = get_scenario_parameters_from_scenario(scenario)
     rng_seeder = np.random.default_rng(512)
-    runs = 1 if plot_single_timestep else this_scenario_parameters.get('runs')
+    runs = 1 if plot_single_run else this_scenario_parameters.get('runs')
 
     radar_data_processor = RadarDataProcessor(radar_config_path)
     simulator = Simulator2D(np.random.default_rng(512), this_scenario_parameters)
@@ -67,7 +67,7 @@ def main(scenario, plot_single_timestep, plot_final_trajectory, radar_config_pat
 
     plotter = Plotter(real_data, paper_mode, SCENARIO_NAME[scenario],
                       display_legend_on_barplot=(scenario in [SCENARIO_NO_CLUTTER, SCENARIO_STRAIGHT]))
-    if plot_single_timestep:
+    if plot_single_run:
         plotter.initialize_plotting_of_timesteps()
 
     trackers = prepare_trackers(initial_timestamp, this_scenario_parameters, rng_seeder, real_data, runs, time_steps)
@@ -91,21 +91,22 @@ def main(scenario, plot_single_timestep, plot_final_trajectory, radar_config_pat
                 ego_states.append(tracker.get_state())
                 tracker.calculate_squared_error(true_state, r, i)
 
-            if plot_single_timestep:
+            if plot_single_run:
                 plotter.plot_ego_pose_2d(trackers, radar_data_processor.get_max_range_m(),
                                          radar_data_processor.get_max_angle_degree(), angle_index=3,
-                                         ground_truth=true_state, extent=this_scenario_parameters.get('area'))
+                                         ground_truth=true_state, extent=this_scenario_parameters.get('estimate_area'))
                 plotter.plot_2d_points_doppler(points, radar_data_processor.get_max_range_m(),
                                                radar_data_processor.get_max_angle_degree(), step=i,
                                                progressed_time=current_timestamp-last_timestamp,
-                                               extent=this_scenario_parameters.get('area'))
+                                               extent=this_scenario_parameters.get('measurement_area'))
             if not real_data:
                 last_timestamp = current_timestamp
                 current_timestamp += 1.0
 
-        if plot_final_trajectory:
-            simulator.plot_trajectory()
-        simulator.reset()
+        if not real_data:
+            if plot_final_trajectory:
+                simulator.plot_trajectory()
+            simulator.reset()
         reset_trackers(trackers, rng_seeder)
 
         if r == (runs-1):
@@ -113,10 +114,10 @@ def main(scenario, plot_single_timestep, plot_final_trajectory, radar_config_pat
 
 
 if __name__ == "__main__":
-    scenario = SCENARIO_TURN
-    plot_single_timestep = False
+    scenario = SCENARIO_STRAIGHT
+    plot_single_run = True
     plot_final_trajectory = False
     radar_config_path = './radar_config.json'
     paper_mode = True
 
-    main(scenario, plot_single_timestep, plot_final_trajectory, radar_config_path, paper_mode)
+    main(scenario, plot_single_run, plot_final_trajectory, radar_config_path, paper_mode)

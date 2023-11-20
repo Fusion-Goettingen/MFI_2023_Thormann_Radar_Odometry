@@ -23,7 +23,7 @@ class Simulator2D(AbstractSimulator):
         self._expected_number_of_clutter = scenario_parameters.get('expected_number_of_clutter')
         self._clutter_doppler_noise = scenario_parameters.get('clutter_doppler_standard_deviation')
 
-        self._area = scenario_parameters.get('area')
+        self._area = scenario_parameters.get('estimate_area')
         self._obstacles = self.__create_obstacles()
 
         self._expected_number_of_measurements = scenario_parameters.get('expected_number_of_measurements')

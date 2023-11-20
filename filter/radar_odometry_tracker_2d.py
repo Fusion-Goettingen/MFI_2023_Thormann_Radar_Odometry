@@ -10,7 +10,7 @@ MODE_RANSAC_THETA = 2
 MODE_GNC = 3
 MODE_GNC_THETA = 4
 
-MODE_COLORS = ['red', 'blue', 'green', 'cyan', 'lightgreen']
+MODE_COLORS = ['black', 'blue', 'cyan', 'red', 'orange']
 MODE_LABELS = ['baseline', 'RANSAC', 'RANSAC (bearing noise)', 'GNC', 'GNC (bearing noise)']
 MODE_MARKERS = ['*', '+', '+', 'x', 'x']
 
