@@ -114,8 +114,8 @@ def main(scenario, plot_single_run, plot_final_trajectory, radar_config_path, pa
 
 
 if __name__ == "__main__":
-    scenario = SCENARIO_STRAIGHT
-    plot_single_run = True
+    scenario = SCENARIO_CLUTTER
+    plot_single_run = False
     plot_final_trajectory = False
     radar_config_path = './radar_config.json'
     paper_mode = True

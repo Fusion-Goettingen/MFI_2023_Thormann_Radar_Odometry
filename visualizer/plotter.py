@@ -33,8 +33,8 @@ class Plotter:
         return error_figure_path, trajectory_figure_path
 
     def initialize_plotting_of_timesteps(self):
-        fig, self._ax = plt.subplots(2, 1)
-        fig.set_size_inches(8.0, 16.0)
+        fig, self._ax = plt.subplots(1, 2)
+        fig.set_size_inches(16.0, 8.0)
 
     def plot_2d_points_doppler(self, points_polar, max_range_m, max_angle_degrees, step, progressed_time=None,
                                extent=None):
